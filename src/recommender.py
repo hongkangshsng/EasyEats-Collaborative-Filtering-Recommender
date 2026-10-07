@@ -57,32 +57,32 @@ class UserBasedCF:
         return result.head(k or self.k).reset_index(drop=True)
 
     def predict(self, user, restaurant) -> float:
+        if user not in self.matrix.index:
+            raise KeyError(f"Unknown user: {user}")
         if restaurant not in self.matrix.columns:
             return float(self.user_mean.loc[user])
 
-        neigh = self.neighbors(user, k=len(self.matrix.index) - 1)
-        weighted_sum = 0.0
-        weight_total = 0.0
+        # Consider users in similarity order and keep at most K neighbors
+        # who actually rated the candidate restaurant.
+        all_neighbors = self.neighbors(user, k=len(self.matrix.index) - 1)
+        contributors = []
 
-        for row in neigh.itertuples(index=False):
+        for row in all_neighbors.itertuples(index=False):
             sim = float(row.similarity)
             value = self.work_matrix.loc[row.neighbor, restaurant]
             if pd.isna(value) or sim <= 0:
                 continue
-            weighted_sum += sim * float(value)
-            weight_total += abs(sim)
-            if weight_total > 0 and sum(
-                1
-                for r in neigh.itertuples(index=False)
-                if r.similarity > 0
-                and not pd.isna(self.work_matrix.loc[r.neighbor, restaurant])
-            ) >= self.k:
+            contributors.append((sim, float(value)))
+            if len(contributors) >= self.k:
                 break
 
-        if weight_total == 0:
+        if not contributors:
             return float(self.user_mean.loc[user])
 
+        weighted_sum = sum(sim * value for sim, value in contributors)
+        weight_total = sum(abs(sim) for sim, _ in contributors)
         pred = weighted_sum / weight_total
+
         if self.normalize:
             pred = pred * float(self.user_std.loc[user]) + float(self.user_mean.loc[user])
 
